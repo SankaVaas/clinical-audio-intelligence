@@ -7,7 +7,7 @@ load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "mistralai/mistral-7b-instruct:free"
+MODEL = "mistralai/mistral-small-3.2-24b-instruct"
 
 EXTRACTION_PROMPT = """You are a clinical NLP system. Extract structured medical information from the conversation transcript below.
 
@@ -52,10 +52,13 @@ async def extract_clinical_entities(transcript_text: str) -> dict:
             }
         )
         data = response.json()
-        raw = data["choices"][0]["message"]["content"]
+        print("EXTRACTOR RAW:", data)  # debug
 
-        # Clean and parse JSON
-        raw = raw.strip()
+        if "choices" not in data:
+            print(f"OpenRouter error: {data.get('error', data)}")
+            return empty_extraction()
+
+        raw = data["choices"][0]["message"]["content"].strip()
         if raw.startswith("```"):
             raw = raw.split("```")[1]
             if raw.startswith("json"):
