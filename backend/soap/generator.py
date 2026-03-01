@@ -7,7 +7,7 @@ load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "mistralai/mistral-7b-instruct:free"
+MODEL = "mistralai/mistral-small-3.2-24b-instruct"
 
 SOAP_PROMPT = """You are a clinical documentation specialist. Generate a SOAP note from the transcript and extracted entities below.
 
@@ -53,6 +53,12 @@ async def generate_soap_note(transcript_text: str, entities: dict) -> dict:
             }
         )
         data = response.json()
+        print("SOAP RAW:", data)  # debug
+
+        if "choices" not in data:
+            print(f"OpenRouter error: {data.get('error', data)}")
+            return empty_soap()
+        
         raw = data["choices"][0]["message"]["content"].strip()
 
         if raw.startswith("```"):
