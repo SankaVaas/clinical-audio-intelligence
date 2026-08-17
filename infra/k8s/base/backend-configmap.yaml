@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: clinical-ai
+data:
+  WHISPER_MODEL: "small"
+  SAMPLE_RATE: "16000"
+  CHUNK_DURATION: "5"
+  LOG_LEVEL: "info"
+  # CORS is now scoped to the real frontend origin, not "*" (see main.py change)
+  ALLOWED_ORIGINS: "https://clinical-ai.example.com"

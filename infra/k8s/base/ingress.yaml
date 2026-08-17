@@ -1,0 +1,35 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: clinical-ai-ingress
+  namespace: clinical-ai
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"     # audio chunk uploads
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"  # long-lived WS
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["clinical-ai.example.com"]
+      secretName: clinical-ai-tls
+  rules:
+    - host: clinical-ai.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: frontend, port: { number: 8080 } }
+          # NOTE: once the API Gateway (auth/rate-limit) service exists in
+          # the Security step, traffic to /api and /ws will route there
+          # instead of straight to `backend`. Left direct-to-backend here
+          # so the Kubernetes step is independently testable.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: backend, port: { number: 8000 } }
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service: { name: backend, port: { number: 8000 } }
