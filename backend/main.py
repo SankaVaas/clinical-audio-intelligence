@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -12,8 +13,15 @@ from soap.generator import generate_soap_note
 from risk.engine import RiskEngine
 
 app = FastAPI(title="Clinical Audio Intelligence")
+
+# CORS is scoped to real origins in every environment. "*" is only used
+# as a local-dev fallback when ALLOWED_ORIGINS isn't set.
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 session = AudioSession()
