@@ -28,7 +28,6 @@ Rules:
 - Return empty arrays if nothing found for a category
 - Return ONLY the JSON, no explanation, no markdown
 
-Transcript:
 """
 
 async def extract_clinical_entities(transcript_text: str) -> dict:
