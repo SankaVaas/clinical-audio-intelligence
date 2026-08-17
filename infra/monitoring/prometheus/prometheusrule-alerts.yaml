@@ -1,0 +1,54 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: clinical-ai-alerts
+  namespace: clinical-ai
+  labels:
+    release: prometheus
+spec:
+  groups:
+    - name: clinical-ai.slo
+      rules:
+        - alert: ASRLatencyHigh
+          expr: histogram_quantile(0.95, sum(rate(asr_latency_seconds_bucket[5m])) by (le)) > 5
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: "p95 ASR latency above 5s"
+
+        - alert: LLMErrorRateHigh
+          expr: |
+            sum(rate(llm_requests_total{status="error"}[5m]))
+            / sum(rate(llm_requests_total[5m])) > 0.05
+          for: 5m
+          labels: { severity: critical }
+          annotations:
+            summary: "LLM error rate above 5% over 5m"
+
+        - alert: AuditWriteFailure
+          expr: increase(audit_write_failures_total[5m]) > 0
+          for: 0m
+          labels: { severity: critical, page: "true" }
+          annotations:
+            summary: "Audit log write failed — compliance-critical, page on-call immediately"
+
+        - alert: HumanReviewQueueBacklog
+          expr: human_review_queue_depth > 25
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: "Human review queue backlog above 25 items for 15m"
+
+        - alert: BackendPodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total{namespace="clinical-ai",container="backend"}[15m]) > 3
+          for: 5m
+          labels: { severity: critical }
+          annotations:
+            summary: "Backend pod restarting repeatedly"
+
+        - alert: HPAMaxedOut
+          expr: kube_horizontalpodautoscaler_status_current_replicas{namespace="clinical-ai",horizontalpodautoscaler="backend-hpa"} >= 10
+          for: 15m
+          labels: { severity: warning }
+          annotations:
+            summary: "backend-hpa at max replicas for 15m — capacity ceiling reached"
