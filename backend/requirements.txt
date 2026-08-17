@@ -43,3 +43,13 @@ typing_extensions==4.15.0
 urllib3==2.6.3
 uvicorn==0.41.0
 websockets==16.0
+
+# --- production infrastructure additions ---
+prometheus-client==0.21.0
+opentelemetry-sdk==1.28.0
+opentelemetry-exporter-otlp-proto-grpc==1.28.0
+opentelemetry-instrumentation-fastapi==0.49b0
+opentelemetry-instrumentation-httpx==0.49b0
+python-jose[cryptography]==3.3.0
+asyncpg==0.30.0
+jiwer==3.0.4
