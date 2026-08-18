@@ -2,6 +2,8 @@ import whisper
 import numpy as np
 import torch
 
+from backend.observability.metrics import asr_requests_total, asr_latency_seconds
+
 class WhisperTranscriber:
     def __init__(self, model_size="base"):
         print(f"Loading Whisper {model_size} model...")
@@ -26,14 +28,20 @@ class WhisperTranscriber:
             return {"text": "", "confidence": 0.0, "language": "en"}
 
         # Run inference
-        result = self.model.transcribe(
-            audio_chunk,
-            language="en",
-            fp16=False,          # CPU safe
-            condition_on_previous_text=True,
-            no_speech_threshold=0.3,
-            logprob_threshold=-1.0
-        )
+        with asr_latency_seconds.time():
+            try:
+                result = self.model.transcribe(
+                    audio_chunk,
+                    language="en",
+                    fp16=False,          # CPU safe
+                    condition_on_previous_text=True,
+                    no_speech_threshold=0.3,
+                    logprob_threshold=-1.0
+                )
+            except Exception:
+                asr_requests_total.labels(status="error").inc()
+                raise
+        asr_requests_total.labels(status="success").inc()
 
         # Extract confidence from segments
         segments = result.get("segments", [])
