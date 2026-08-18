@@ -23,14 +23,12 @@ numba==0.64.0
 numpy==2.4.2
 openai-whisper==20250625
 pillow==12.0.0
-PyAudio==0.2.14
 pycparser==3.0
 pydantic==2.12.5
 pydantic_core==2.41.5
 python-dotenv==1.2.1
 regex==2026.2.19
 requests==2.32.5
-sounddevice==0.5.5
 starlette==0.52.1
 sympy==1.14.0
 tiktoken==0.12.0

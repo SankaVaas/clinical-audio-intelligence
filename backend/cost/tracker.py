@@ -14,8 +14,12 @@ from backend.observability.metrics import llm_requests_total, llm_latency_second
 
 # USD per 1K tokens -- keep in sync with the provider's actual pricing page;
 # this is a static table, not fetched live, so it needs a periodic review.
+# Keys must match the OpenRouter model string used in nlp/extractor.py and
+# soap/generator.py exactly, or usage silently prices at $0 (see the
+# .get(model, {"prompt": 0, ...}) fallback below) -- treat a $0-cost model
+# showing up in llm_tokens_total as a signal this table is stale.
 PRICING = {
-    "mistral-7b": {"prompt": 0.00007, "completion": 0.00007},
+    "mistralai/mistral-small-3.2-24b-instruct": {"prompt": 0.00003, "completion": 0.00003},
 }
 
 
