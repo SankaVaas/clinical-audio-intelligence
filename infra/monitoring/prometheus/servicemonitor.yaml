@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend
+  namespace: clinical-ai
+  labels:
+    release: prometheus   # matches the Prometheus Operator's serviceMonitorSelector
+spec:
+  selector:
+    matchLabels: { app: backend }
+  namespaceSelector:
+    matchNames: [clinical-ai]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s

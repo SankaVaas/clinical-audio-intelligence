@@ -1,0 +1,26 @@
+# For tenants requiring dedicated compute (regulatory or contractual
+# isolation, not just logical/RLS isolation) -- namespace-per-tenant
+# pattern. Shared tenants stay on the single `clinical-ai` namespace with
+# RLS-only isolation; this is the escalation path for tenants that need more.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: clinical-ai-tenant-__TENANT_ID__
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    tenant-isolation: dedicated
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-cross-tenant
+  namespace: clinical-ai-tenant-__TENANT_ID__
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: clinical-ai-tenant-__TENANT_ID__ }
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: ingress-nginx }

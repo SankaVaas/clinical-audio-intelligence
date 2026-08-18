@@ -1,0 +1,29 @@
+# Nightly regression run against the golden sets for whatever model
+# versions are currently in production. A failing job here should block
+# the next deploy (wire the exit code into the CD gate), not just alert.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: model-eval-nightly
+  namespace: clinical-ai
+spec:
+  schedule: "0 3 * * *"
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: eval
+              image: REGISTRY/clinical-ai-backend:__IMAGE_TAG__
+              command: ["python", "-m", "eval.harness"]
+              args: ["--component", "risk", "--model-version", "$(RISK_MODEL_VERSION)",
+                     "--dataset", "/data/eval/risk_golden.jsonl"]
+              envFrom:
+                - configMapRef: { name: backend-config }
+              volumeMounts:
+                - { name: eval-data, mountPath: /data/eval, readOnly: true }
+          volumes:
+            - name: eval-data
+              persistentVolumeClaim: { claimName: eval-golden-datasets }

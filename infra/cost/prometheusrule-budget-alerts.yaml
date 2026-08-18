@@ -1,0 +1,25 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cost-control-alerts
+  namespace: clinical-ai
+  labels: { release: prometheus }
+spec:
+  groups:
+    - name: clinical-ai.cost
+      rules:
+        - alert: LLMSpendRateAnomalous
+          expr: |
+            sum(rate(llm_tokens_total[15m])) by (model)
+            > 3 * sum(rate(llm_tokens_total[15m] offset 1d)) by (model)
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: "LLM token consumption 3x higher than same time yesterday — possible runaway loop"
+
+        - alert: TenantBudgetNearLimit
+          expr: (tenant_spent_usd / tenant_budget_limit_usd) > 0.9
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "Tenant at 90%+ of monthly LLM budget"

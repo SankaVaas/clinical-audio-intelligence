@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: clinical-ai
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc: { endpoint: 0.0.0.0:4317 }
+          http: { endpoint: 0.0.0.0:4318 }
+    processors:
+      batch: {}
+      # Strip anything that could carry PHI before it leaves the trusted
+      # boundary -- span attributes must never contain transcript text,
+      # patient identifiers, or free-text clinical content.
+      attributes/redact_phi:
+        actions:
+          - key: transcript.text
+            action: delete
+          - key: patient.name
+            action: delete
+          - key: patient.mrn
+            action: delete
+      memory_limiter:
+        check_interval: 5s
+        limit_mib: 512
+    exporters:
+      otlp/tempo:
+        endpoint: tempo.observability.svc.cluster.local:4317
+        tls: { insecure: true }
+      prometheus:
+        endpoint: 0.0.0.0:8889   # span metrics -> scraped by Prometheus
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, attributes/redact_phi, batch]
+          exporters: [otlp/tempo]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [prometheus]

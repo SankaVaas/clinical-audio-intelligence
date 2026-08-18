@@ -1,0 +1,25 @@
+# Velero: cluster-state + PV backup, standard k8s DR tooling.
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: clinical-ai-daily
+  namespace: velero
+spec:
+  schedule: "0 2 * * *"
+  template:
+    includedNamespaces: [clinical-ai]
+    storageLocation: default        # backed by cross-region object storage
+    ttl: 720h0m0s                    # 30-day retention for cluster-state backups
+    hooks: {}
+---
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: clinical-ai-weekly-longterm
+  namespace: velero
+spec:
+  schedule: "0 3 * * 0"
+  template:
+    includedNamespaces: [clinical-ai]
+    storageLocation: default
+    ttl: 8760h0m0s                   # 1-year retention, weekly cadence
