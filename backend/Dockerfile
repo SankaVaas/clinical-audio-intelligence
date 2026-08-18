@@ -20,10 +20,12 @@ RUN addgroup --system app && adduser --system --ingroup app app
 
 WORKDIR /app
 COPY --from=build /opt/venv /opt/venv
-COPY backend/ /app/
+
+COPY backend/ /app/backend/
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
     # Whisper model cache -- mount a volume here in k8s so pods don't
     # re-download the model on every cold start
     XDG_CACHE_HOME=/app/.cache
@@ -38,4 +40,4 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
 
 # --workers 1: model objects (Whisper) are not fork-safe/cheap to duplicate.
 # Scale horizontally via k8s replicas + HPA instead of uvicorn workers.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
