@@ -4,27 +4,20 @@ Tenant context resolution and enforcement.
 Tenant ID comes from the validated JWT (backend/auth/dependencies.py), never
 from a client-supplied header or query param -- trusting client input for
 tenant scoping is the single most common multi-tenant data-leak bug class.
+
+Deliberately NOT an HTTP middleware: Starlette/FastAPI resolve `Depends()`
+inside the route handling that a middleware's `call_next` wraps, so a
+middleware can never see a principal that a dependency sets -- it hasn't run
+yet at that point. The contextvar is set directly by the auth dependency
+(get_current_principal, in backend/auth/dependencies.py) instead, which is
+the actual point at which the JWT has been validated and the tenant ID is
+known. Each request runs in its own asyncio Task, so contextvar values don't
+leak between concurrent requests.
 """
 import contextvars
-from fastapi import Request, HTTPException, status
+from fastapi import HTTPException, status
 
 current_tenant: contextvars.ContextVar[str] = contextvars.ContextVar("current_tenant")
-
-
-async def tenant_context_middleware(request: Request, call_next):
-    principal = getattr(request.state, "principal", None)  # set by auth dependency upstream
-    if principal is None and request.url.path not in ("/health", "/metrics"):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED)
-
-    token = None
-    if principal:
-        token = current_tenant.set(principal.tenant_id)
-    try:
-        response = await call_next(request)
-    finally:
-        if token:
-            current_tenant.reset(token)
-    return response
 
 
 def require_tenant_match(resource_tenant_id: str):
