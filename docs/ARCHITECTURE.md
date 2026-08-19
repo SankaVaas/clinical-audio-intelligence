@@ -88,13 +88,30 @@ docs/
 | Multi-tenancy | `backend/tenancy`, `infra/multi-tenancy` | Server-resolved tenant ID, Postgres RLS, optional dedicated namespace |
 | Disaster recovery | `infra/dr` | RPO 5 min / RTO 30 min, Multi-AZ + cross-region replica, quarterly drills |
 
-## Known architectural change required, not yet applied
-`backend/audio/capture.py` opens a local microphone via `sounddevice` on the
-process host. In a containerized deployment this has no meaning — audio must
-be captured client-side (browser/mobile) and streamed to the backend. This
-is required for the "Audio Ingestion" stage in the diagram above to function
-as drawn, and should be treated as a prerequisite before production traffic,
-independent of the infrastructure layers in this repository.
+## Audio ingestion — resolved
+`backend/audio/capture.py` (server-side `sounddevice` mic capture) has been
+removed. Audio is now client-captured and streamed to the backend over
+`WS /ws/audio` as raw 16-bit PCM binary frames; `backend/audio/ingest.py`
+reassembles frames into fixed-duration chunks regardless of client chunking
+behavior. Session state moved from a single process-global `AudioSession` to
+one instance per connection (`backend/audio/manager.py`), each tagged with
+the tenant ID from the caller's validated JWT — this is also what makes
+concurrent multi-tenant session state actually correct, not just the
+auth/audit/cost layers around it.
+
+**Frontend — done.** `frontend/src/App.tsx` now speaks the real protocol:
+mic capture via `AudioWorkletNode` (`src/audio/AudioStreamer.ts`), OIDC login
+(`src/auth/AuthProvider.tsx`), `WS /ws/audio` with first-message auth, PCM
+streaming, and calls to `/sessions/{id}/analyze`. See `frontend/README.md`
+for the full protocol and the runtime-config-injection mechanism that lets
+one Docker image serve every environment.
+
+**Known constraint accepted with this design:** sessions are in-process
+state, not externalized to Kafka/Redis (deferred per the earlier
+Kafka/PubSub decision). A session is pinned to whichever pod accepted its
+WebSocket connection and does not survive that pod's restart. Acceptable for
+a single continuous conversation; revisit if session resumption across
+pods becomes a requirement.
 
 ## Not yet implemented (explicitly out of scope of current layers)
 - Kafka/PubSub between ingestion and ASR (diagram shows it; current build is
