@@ -1,46 +1,99 @@
-# Getting Started with Create React App
+# Frontend — Production Notes
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+## What changed from the original build
+The original frontend assumed a server-owned microphone and a single
+global backend session (`POST /session/start`, one shared `WS /ws`). Neither
+exists anymore on the backend. This layer replaces:
 
-## Available Scripts
+- Server-side audio capture → **client-side capture**, streamed out.
+- No auth → **OIDC login** (`src/auth/AuthProvider.tsx`), matching the
+  backend's JWT validation exactly (same custom claim namespace for
+  `tenant_id` / `roles`).
+- A single global session → **one session per recording**, created by the
+  server on WebSocket connect and referenced by `session_id` thereafter.
+- Build-time config → **runtime config injection**, so one Docker image
+  works across dev/staging/prod (see below).
 
-In the project directory, you can run:
+## Audio capture
+`src/audio/AudioStreamer.ts` + `public/audio-processor.js`:
+`getUserMedia` → `AudioWorkletNode` → 16-bit PCM at 16kHz, streamed to the
+backend as binary WebSocket frames. The worklet does nearest-neighbor
+resampling from the browser's native rate (typically 44.1/48kHz) down to
+16kHz — adequate for speech, not a production-grade resampler; swap in a
+proper polyphase/sinc implementation if transcription accuracy at the
+margins matters more than the added complexity.
 
-### `npm start`
+## Auth flow
+`src/auth/AuthProvider.tsx` uses `oidc-client-ts` for a standard
+Authorization Code flow against the org's IdP:
+1. `login()` redirects to the IdP.
+2. IdP redirects back to `/auth/callback` with an auth code.
+3. `signinRedirectCallback()` exchanges it for tokens; the access token is
+   what's sent as the backend's bearer token and as the WebSocket's
+   first-message auth payload.
+4. `automaticSilentRenew: true` — works via refresh token if the IdP issues
+   one for SPA clients; otherwise falls through to requiring a fresh login
+   when the token expires, rather than retrying indefinitely.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+Token storage is `sessionStorage` (cleared when the tab closes) — a
+standard SPA trade-off, not full in-memory-only storage, since true
+in-memory storage breaks silent renewal across a page reload.
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+## WebSocket protocol (`WS /ws/audio`)
+1. Client opens the socket, sends `{"type": "auth", "token": "<JWT>"}` as
+   the first message — browsers cannot set an `Authorization` header on a
+   WS handshake, so first-message auth is the standard workaround.
+2. Server replies `{"type": "session_created", "session_id": "..."}`.
+3. Client streams raw PCM binary frames.
+4. Server pushes `{"type": "transcript_chunk", ...}` as segments transcribe.
+5. Client sends `{"type": "stop"}` or disconnects to end the session.
 
-### `npm test`
+Close codes `4401` (auth failure) and `4403` (role check failure) are
+handled explicitly in `App.tsx` and surfaced to the user, rather than
+presenting as a generic connection drop.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Runtime configuration — read this before deploying
+Create React App bakes `REACT_APP_*` variables into the JS bundle at
+`npm run build` time. Left as-is, that would require a separate Docker
+image per environment just to point at a different API/OIDC URL, which
+breaks a "build once, promote the same image" CI/CD model.
 
-### `npm run build`
+Fixed via runtime injection instead:
+- `public/env.template.js` — a template with `${VAR}` placeholders.
+- `frontend/docker-entrypoint.sh` — runs `envsubst` against real container
+  environment variables at **container startup**, writing the result to
+  `env.js`, then execs nginx.
+- `index.html` loads `env.js` before the app bundle; `src/config.ts` reads
+  from `window.__RUNTIME_CONFIG__`.
+- `public/env.js` (committed, with dev defaults) is what `npm start` serves
+  directly for local development, since CRA's dev server has no envsubst
+  step. The container's copy is overwritten at startup, so this file's
+  presence in the repo is purely for local dev.
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Because the entrypoint needs to *write* `env.js` at startup, but the
+container's root filesystem is otherwise read-only
+(`infra/k8s/base/frontend.yaml`), an initContainer seeds a writable
+`emptyDir` copy of the built static assets rather than relaxing
+`readOnlyRootFilesystem` on the main container.
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+Required environment variables at deploy time (see
+`infra/k8s/base/frontend-configmap.yaml`): `API_BASE`, `WS_BASE`,
+`OIDC_AUTHORITY`, `OIDC_CLIENT_ID`, `OIDC_AUDIENCE`.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Local development
+```bash
+npm install
+npm start   # uses public/env.js dev defaults (localhost:8000)
+```
+Requires a real OIDC test client if you want the login flow to work
+end-to-end locally — point `public/env.js` at a dev tenant on the org's IdP,
+or a local IdP emulator, rather than a hardcoded backend bypass.
 
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
-
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
-
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
+## Known gaps, not addressed in this pass
+- No `/auth/callback` route handling beyond the check in `AuthProvider` —
+  this is a single-page app with no router; if routing is introduced later,
+  make sure `/auth/callback` still resolves to the same component tree.
+- No retry/backoff on WebSocket disconnect — a dropped connection mid-session
+  ends the session; the user has to press RECORD again. Reasonable for v1,
+  worth revisiting if network reliability in the field becomes an issue.
+- No resampling quality upgrade (see Audio capture above).
