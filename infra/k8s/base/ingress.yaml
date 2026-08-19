@@ -29,7 +29,7 @@ spec:
             pathType: Prefix
             backend:
               service: { name: backend, port: { number: 8000 } }
-          - path: /ws
+          - path: /ws/audio
             pathType: Prefix
             backend:
               service: { name: backend, port: { number: 8000 } }

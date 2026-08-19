@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: clinical-ai
+data:
+  API_BASE: "https://clinical-ai.example.com/api"
+  WS_BASE: "wss://clinical-ai.example.com"
+  OIDC_AUTHORITY: "https://auth.example.com/"
+  OIDC_CLIENT_ID: "clinical-ai-frontend"
+  OIDC_AUDIENCE: "clinical-ai-api"

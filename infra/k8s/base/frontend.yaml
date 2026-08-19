@@ -16,11 +16,25 @@ spec:
       securityContext:
         runAsNonRoot: true
         seccompProfile: { type: RuntimeDefault }
+      # The image's built-in /usr/share/nginx/html is read-only (part of
+      # readOnlyRootFilesystem below); the entrypoint needs to write
+      # env.js at startup with real config values, so an initContainer
+      # seeds a writable emptyDir copy of the static assets instead of
+      # relaxing readOnlyRootFilesystem on the main container.
+      initContainers:
+        - name: seed-static-assets
+          image: REGISTRY/clinical-ai-frontend:__IMAGE_TAG__
+          command: ["sh", "-c", "cp -r /usr/share/nginx/html/. /mnt/html/"]
+          volumeMounts:
+            - name: html-content
+              mountPath: /mnt/html
       containers:
         - name: frontend
           image: REGISTRY/clinical-ai-frontend:__IMAGE_TAG__
           ports:
             - containerPort: 8080
+          envFrom:
+            - configMapRef: { name: frontend-config }
           resources:
             requests: { cpu: "100m", memory: "128Mi" }
             limits: { cpu: "300m", memory: "256Mi" }
@@ -39,10 +53,14 @@ spec:
               mountPath: /var/cache/nginx
             - name: nginx-run
               mountPath: /var/run
+            - name: html-content
+              mountPath: /usr/share/nginx/html
       volumes:
         - name: nginx-cache
           emptyDir: {}
         - name: nginx-run
+          emptyDir: {}
+        - name: html-content
           emptyDir: {}
 ---
 apiVersion: v1
