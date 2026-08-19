@@ -1,5 +1,10 @@
 from datetime import datetime
 
+from backend.observability.metrics import risk_flags_total
+# Note: analyze() is synchronous (deterministic rules, no I/O or LLM calls),
+# so it isn't wrapped with @traced_stage, which assumes an async callable.
+# Its cost is negligible compared to the LLM stages either side of it.
+
 # Hard-coded clinical rules - deterministic, explainable
 CRITICAL_COMBINATIONS = [
     {
@@ -40,8 +45,12 @@ DRUG_INTERACTIONS = [
 ]
 
 class RiskEngine:
-    def __init__(self):
-        self.audit_log = []
+    """
+    Pure/no-I/O by design: analyze() only computes flags. Durable audit
+    logging of results is the caller's responsibility (main.py calls
+    AuditService after this returns) -- keeping I/O out of this class is
+    what makes eval.harness able to test it in isolation without a DB.
+    """
 
     def analyze(self, entities: dict, transcript_text: str) -> dict:
         flags = []
@@ -110,16 +119,7 @@ class RiskEngine:
             "analyzed_at": datetime.utcnow().isoformat()
         }
 
-        self._log(result)
+        for f in flags:
+            risk_flags_total.labels(severity=f["severity"], category=f["source"]).inc()
+
         return result
-
-    def _log(self, result: dict):
-        self.audit_log.append({
-            "event": "RISK_ANALYSIS",
-            "flags_found": len(result["flags"]),
-            "highest_severity": result["highest_severity"],
-            "timestamp": datetime.utcnow().isoformat()
-        })
-
-    def get_audit_log(self):
-        return self.audit_log
