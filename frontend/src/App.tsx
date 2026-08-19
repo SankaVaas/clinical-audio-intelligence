@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import axios from "axios";
-
-const API = "http://localhost:8080";
-const WS_URL = "ws://localhost:8080/ws";
+import { useAuth } from "./auth/AuthProvider";
+import { AudioStreamer } from "./audio/AudioStreamer";
+import { config } from "./config";
 
 type TranscriptEntry = { text: string; confidence: number; timestamp: string; speaker: string };
 type Analysis = { entities: any; soap: any; risk: any; transcript_length: number; segments: number };
 
 export default function App() {
+  const { isLoading: authLoading, isAuthenticated, accessToken, principal, login, logout } = useAuth();
+
   const [isRecording, setIsRecording] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -16,28 +18,15 @@ export default function App() {
   const [wsStatus, setWsStatus] = useState<"connected" | "disconnected">("disconnected");
   const [timer, setTimer] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
+  // Session ID now comes from the server on WS connect (backend/main.py's
+  // /ws/audio handshake) -- there's no more "the one global session";
+  // every recording is its own session, scoped to the caller's tenant.
+  const [sessionId, setSessionId] = useState<string | null>(null);
+
   const ws = useRef<WebSocket | null>(null);
+  const audioStreamer = useRef<AudioStreamer | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // WebSocket
-  useEffect(() => {
-    ws.current = new WebSocket(WS_URL);
-    ws.current.onopen = () => setWsStatus("connected");
-    ws.current.onclose = () => setWsStatus("disconnected");
-    ws.current.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "transcript_chunk") {
-        setTranscript((prev) => [...prev, msg]);
-      }
-      if (msg.type === "analysis_complete") {
-        setAnalysis(msg);
-        setIsAnalyzing(false);
-        setActiveTab("risk");
-      }
-    };
-    return () => ws.current?.close();
-  }, []);
 
   // Auto scroll transcript
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [transcript]);
@@ -53,6 +42,15 @@ export default function App() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [isRecording]);
 
+  // Clean up mic + socket on unmount so a component teardown (e.g. route
+  // change in a future multi-page version) can't leave the mic hot.
+  useEffect(() => {
+    return () => {
+      audioStreamer.current?.stop();
+      ws.current?.close();
+    };
+  }, []);
+
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
@@ -60,32 +58,95 @@ export default function App() {
 
   const formatTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
-  const startSession = async () => {
-    await axios.post(`${API}/session/start`);
-    setIsRecording(true);
+  /**
+   * Replaces the old POST /session/start. The flow is now:
+   * open WS -> send {type: "auth", token} as the FIRST message (browsers
+   * can't set an Authorization header on a WS handshake) -> server
+   * confirms with {type: "session_created", session_id} -> only then do
+   * we start capturing and streaming the mic, so we never send audio to a
+   * connection the server hasn't authenticated.
+   */
+  const startSession = useCallback(async () => {
+    if (!accessToken) { showToast("Not signed in"); return; }
     setTranscript([]);
     setAnalysis(null);
-  };
 
-  const stopSession = async () => {
-    await axios.post(`${API}/session/stop`);
+    const socket = new WebSocket(`${config.wsBase}/ws/audio`);
+    socket.binaryType = "arraybuffer";
+    ws.current = socket;
+
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ type: "auth", token: accessToken }));
+    };
+
+    socket.onmessage = async (e) => {
+      const msg = JSON.parse(e.data);
+
+      if (msg.type === "session_created") {
+        setSessionId(msg.session_id);
+        setWsStatus("connected");
+        try {
+          const streamer = new AudioStreamer();
+          audioStreamer.current = streamer;
+          await streamer.start((chunk) => {
+            if (socket.readyState === WebSocket.OPEN) socket.send(chunk);
+          });
+          setIsRecording(true);
+        } catch (err) {
+          console.error("Microphone access failed", err);
+          showToast("Microphone access denied");
+          socket.close();
+        }
+      }
+
+      if (msg.type === "transcript_chunk") {
+        setTranscript((prev) => [...prev, msg]);
+      }
+    };
+
+    socket.onclose = (e) => {
+      setWsStatus("disconnected");
+      setIsRecording(false);
+      audioStreamer.current?.stop();
+      audioStreamer.current = null;
+      // Close codes match backend/main.py's audio_ingest handler.
+      if (e.code === 4401) showToast("Session expired — please sign in again");
+      if (e.code === 4403) showToast("Access denied: clinician role required");
+    };
+
+    socket.onerror = () => showToast("Connection error");
+  }, [accessToken]);
+
+  const stopSession = useCallback(() => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      ws.current.send(JSON.stringify({ type: "stop" }));
+      ws.current.close();
+    }
+    audioStreamer.current?.stop();
+    audioStreamer.current = null;
     setIsRecording(false);
-  };
+  }, []);
 
-  const clearSession = async () => {
-    if (isRecording) await stopSession();
+  const clearSession = () => {
+    if (isRecording) stopSession();
     setTranscript([]);
     setAnalysis(null);
     setTimer(0);
+    setSessionId(null);
     showToast("Session cleared");
   };
 
   const runAnalysis = async () => {
+    if (!sessionId) { showToast("No active session to analyze"); return; }
     if (transcript.length === 0) { showToast("No transcript to analyze"); return; }
     setIsAnalyzing(true);
     setActiveTab("entities");
     try {
-      const res = await axios.post(`${API}/analyze`);
+      const res = await axios.post(
+        `${config.apiBase}/sessions/${sessionId}/analyze`,
+        {},
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
       setAnalysis(res.data);
       setActiveTab("risk");
     } catch {
@@ -137,6 +198,30 @@ export default function App() {
     ? Math.round(transcript.reduce((a, b) => a + b.confidence, 0) / transcript.length * 100)
     : 0;
 
+  // --- Auth gating ---------------------------------------------------
+  // Nothing below this renders without a validated session; the backend
+  // enforces this too (every route requires a role), but gating here
+  // avoids flashing an interactive UI the API will just reject.
+  if (authLoading) {
+    return (
+      <div style={{ background: "#060910", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: "#555", fontFamily: "'JetBrains Mono', monospace", fontSize: 12, letterSpacing: 2 }}>
+        LOADING SESSION…
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div style={{ background: "#060910", minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#c9d1d9", fontFamily: "'JetBrains Mono', monospace" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, letterSpacing: 3, marginBottom: 24 }}>CLINICAL AUDIO INTELLIGENCE</div>
+        <button onClick={login}
+          style={{ background: "#0044ff18", border: "1px solid #4488ff", color: "#4488ff", padding: "10px 28px", borderRadius: 4, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit", letterSpacing: 2 }}>
+          SIGN IN
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div style={{ fontFamily: "'JetBrains Mono', 'Courier New', monospace", background: "#060910", minHeight: "100vh", color: "#c9d1d9", position: "relative" }}>
 
@@ -166,6 +251,13 @@ export default function App() {
           <span style={{ color: wsStatus === "connected" ? "#00ff88" : "#ff4444", letterSpacing: 1 }}>
             ● WS {wsStatus.toUpperCase()}
           </span>
+          {principal && (
+            <span style={{ color: "#555", letterSpacing: 1 }}>{principal.userId}</span>
+          )}
+          <button onClick={logout}
+            style={{ background: "transparent", border: "1px solid #1e2a3a", color: "#555", padding: "4px 10px", borderRadius: 4, cursor: "pointer", fontSize: 10, fontFamily: "inherit", letterSpacing: 1 }}>
+            SIGN OUT
+          </button>
         </div>
       </div>
 
