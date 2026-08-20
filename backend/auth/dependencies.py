@@ -4,6 +4,7 @@ and validated here via JWKS -- the backend never issues or stores credentials.
 """
 import os
 import time
+import logging
 from functools import lru_cache
 
 import httpx
@@ -15,8 +16,37 @@ from backend.tenancy.middleware import current_tenant
 
 bearer_scheme = HTTPBearer()
 
-OIDC_ISSUER = os.environ["OIDC_ISSUER"]           # e.g. https://auth.example.com/
-OIDC_AUDIENCE = os.environ["OIDC_AUDIENCE"]        # e.g. clinical-ai-api
+# --------------------------------------------------------------------------
+# Local-dev auth bypass. Lets the app run without a real IdP for local
+# development / docker-compose -- setting up a full OIDC provider just to
+# click through the UI is friction nobody should have to pay for local dev.
+#
+# Hard-gated: refuses to even start if somehow enabled with
+# ENVIRONMENT=production, rather than silently ignoring the misconfiguration.
+# This check runs at import time, not on first request, so a misconfigured
+# deploy fails at pod startup (visible immediately in rollout status) rather
+# than passing health checks and only failing when someone notices auth is
+# wide open.
+# --------------------------------------------------------------------------
+DEV_AUTH_BYPASS = os.getenv("DEV_AUTH_BYPASS", "false").lower() == "true"
+ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
+
+if DEV_AUTH_BYPASS and ENVIRONMENT == "production":
+    raise RuntimeError(
+        "DEV_AUTH_BYPASS=true with ENVIRONMENT=production -- refusing to start. "
+        "This combination would disable authentication in production."
+    )
+
+if DEV_AUTH_BYPASS:
+    logging.getLogger(__name__).warning(
+        "DEV_AUTH_BYPASS is enabled -- authentication is DISABLED. "
+        "This build must never be deployed outside local development."
+    )
+    OIDC_ISSUER = os.getenv("OIDC_ISSUER", "")
+    OIDC_AUDIENCE = os.getenv("OIDC_AUDIENCE", "")
+else:
+    OIDC_ISSUER = os.environ["OIDC_ISSUER"]        # e.g. https://auth.example.com/
+    OIDC_AUDIENCE = os.environ["OIDC_AUDIENCE"]    # e.g. clinical-ai-api
 
 
 @lru_cache(maxsize=1)
@@ -44,6 +74,22 @@ async def decode_token(token: str) -> Principal:
     Authorization header on a WS handshake. get_current_principal (below)
     wraps this for regular HTTP routes; WebSocket routes call this directly
     against a token sent as the connection's first message."""
+    if DEV_AUTH_BYPASS:
+        # Any non-empty token is accepted; identity comes from env vars,
+        # not from the token contents, since there's no real IdP issuing
+        # it. The frontend's dev-mode AuthProvider sends a fixed
+        # placeholder token to satisfy HTTPBearer's "header must be
+        # present" check -- see frontend/src/auth/AuthProvider.tsx.
+        if not token:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing token")
+        principal = Principal({
+            "sub": os.getenv("DEV_USER_ID", "dev-clinician"),
+            "https://clinical-ai/tenant_id": os.getenv("DEV_TENANT_ID", "dev-tenant"),
+            "https://clinical-ai/roles": os.getenv("DEV_ROLES", "clinician,reviewer").split(","),
+        })
+        current_tenant.set(principal.tenant_id)
+        return principal
+
     try:
         claims = jwt.decode(
             token,

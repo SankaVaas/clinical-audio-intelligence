@@ -1,0 +1,75 @@
+version: "3.9"
+
+# Local development only. Uses DEV_AUTH_BYPASS on both backend and frontend
+# (see backend/auth/dependencies.py and frontend/src/auth/AuthProvider.tsx)
+# so you can run the whole thing without standing up a real OIDC provider.
+# This bypass is hard-refused by the backend if ENVIRONMENT=production, so
+# there's no path from this file to a real deployment by accident.
+#
+# Usage:
+#   docker compose up --build
+#   open http://localhost:3000
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: clinical
+      POSTGRES_PASSWORD: clinical
+      POSTGRES_DB: clinical_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./infra/local-dev/postgres-init:/docker-entrypoint-initdb.d:ro
+      - clinical-ai-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clinical -d clinical_ai"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: development
+      DEV_AUTH_BYPASS: "true"
+      DEV_USER_ID: dev-clinician
+      DEV_TENANT_ID: dev-tenant
+      DEV_ROLES: "clinician,reviewer"
+      # app_runtime is created by infra/local-dev/postgres-init/01-audit-schema.sql
+      DATABASE_URL: postgresql://app_runtime:dev_only_not_a_real_secret@postgres:5432/clinical_ai
+      ALLOWED_ORIGINS: http://localhost:3000
+      WHISPER_MODEL: ${WHISPER_MODEL:-base}
+      LOG_LEVEL: info
+      # Real LLM calls need a real key -- without one, extraction/SOAP
+      # generation degrade gracefully to empty results (see
+      # backend/nlp/extractor.py's "choices" not in data branch) rather
+      # than crash, so the app still runs without this, just without real
+      # clinical output.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "3000:8080"
+    environment:
+      API_BASE: http://localhost:8000
+      WS_BASE: ws://localhost:8000
+      DEV_AUTH_BYPASS: "true"
+      DEV_USER_ID: dev-clinician
+      DEV_TENANT_ID: dev-tenant
+      DEV_ROLES: "clinician,reviewer"
+    depends_on:
+      - backend
+
+volumes:
+  clinical-ai-pgdata:
