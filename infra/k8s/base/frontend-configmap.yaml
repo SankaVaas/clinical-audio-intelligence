@@ -9,3 +9,6 @@ data:
   OIDC_AUTHORITY: "https://auth.example.com/"
   OIDC_CLIENT_ID: "clinical-ai-frontend"
   OIDC_AUDIENCE: "clinical-ai-api"
+  # Must stay "false" here for the same reason as backend-config's
+  # DEV_AUTH_BYPASS -- production must always use real OIDC login.
+  DEV_AUTH_BYPASS: "false"
