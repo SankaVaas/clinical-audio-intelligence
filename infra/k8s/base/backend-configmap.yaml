@@ -10,3 +10,8 @@ data:
   LOG_LEVEL: "info"
   # CORS is now scoped to the real frontend origin, not "*" (see main.py change)
   ALLOWED_ORIGINS: "https://clinical-ai.example.com"
+  ENVIRONMENT: "production"
+  # Must stay "false" here. backend/auth/dependencies.py refuses to start
+  # if this is "true" while ENVIRONMENT=production -- belt and suspenders
+  # against this ever reaching a real deployment.
+  DEV_AUTH_BYPASS: "false"
