@@ -14,6 +14,10 @@ declare global {
       OIDC_AUTHORITY?: string;
       OIDC_CLIENT_ID?: string;
       OIDC_AUDIENCE?: string;
+      DEV_AUTH_BYPASS?: string;
+      DEV_USER_ID?: string;
+      DEV_TENANT_ID?: string;
+      DEV_ROLES?: string;
     };
   }
 }
@@ -35,4 +39,12 @@ export const config = {
   oidcAuthority: readVar("OIDC_AUTHORITY", "https://auth.example.com/"),
   oidcClientId: readVar("OIDC_CLIENT_ID", "clinical-ai-frontend-dev"),
   oidcAudience: readVar("OIDC_AUDIENCE", "clinical-ai-api"),
+  // Local-dev only -- see backend/auth/dependencies.py's DEV_AUTH_BYPASS
+  // for the server-side half of this. Never set true outside local dev;
+  // infra/k8s/base/*-configmap.yaml pin this to "false" for every real
+  // deployment target.
+  devAuthBypass: readVar("DEV_AUTH_BYPASS", "false") === "true",
+  devUserId: readVar("DEV_USER_ID", "dev-clinician"),
+  devTenantId: readVar("DEV_TENANT_ID", "dev-tenant"),
+  devRoles: readVar("DEV_ROLES", "clinician,reviewer"),
 };

@@ -10,4 +10,10 @@ window.__RUNTIME_CONFIG__ = {
   OIDC_AUTHORITY: "${OIDC_AUTHORITY}",
   OIDC_CLIENT_ID: "${OIDC_CLIENT_ID}",
   OIDC_AUDIENCE: "${OIDC_AUDIENCE}",
+  // Only ever "true" in local-dev compose config -- production/staging
+  // ConfigMaps pin this to "false". See backend/auth/dependencies.py.
+  DEV_AUTH_BYPASS: "${DEV_AUTH_BYPASS}",
+  DEV_USER_ID: "${DEV_USER_ID}",
+  DEV_TENANT_ID: "${DEV_TENANT_ID}",
+  DEV_ROLES: "${DEV_ROLES}",
 };

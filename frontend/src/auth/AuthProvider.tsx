@@ -60,6 +60,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    // Local-dev bypass: skip the OIDC redirect entirely. Gated by the same
+    // runtime config flag the backend checks (DEV_AUTH_BYPASS) -- see
+    // backend/auth/dependencies.py. Never set in any real deployment's
+    // ConfigMap.
+    if (config.devAuthBypass) {
+      setIsLoading(false);
+      return;
+    }
+
     const onUserLoaded = (u: User) => setUser(u);
     const onUserUnloaded = () => setUser(null);
     const onSilentRenewError = (err: Error) => {
@@ -102,21 +111,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(() => {
+    if (config.devAuthBypass) return;
     userManager.signinRedirect();
   }, []);
 
   const logout = useCallback(() => {
+    if (config.devAuthBypass) {
+      window.location.reload();
+      return;
+    }
     userManager.signoutRedirect();
   }, []);
 
-  const value: AuthContextValue = {
-    isLoading,
-    isAuthenticated: !!user && !user.expired,
-    accessToken: user?.access_token ?? null,
-    principal: user ? principalFromUser(user) : null,
-    login,
-    logout,
-  };
+  const value: AuthContextValue = config.devAuthBypass
+    ? {
+        isLoading,
+        isAuthenticated: true,
+        // Any non-empty string satisfies the backend's HTTPBearer check;
+        // DEV_AUTH_BYPASS on the server ignores the token's actual content
+        // and derives identity from its own env vars instead.
+        accessToken: "dev-bypass-token",
+        principal: {
+          userId: config.devUserId,
+          tenantId: config.devTenantId,
+          roles: config.devRoles.split(","),
+        },
+        login,
+        logout,
+      }
+    : {
+        isLoading,
+        isAuthenticated: !!user && !user.expired,
+        accessToken: user?.access_token ?? null,
+        principal: user ? principalFromUser(user) : null,
+        login,
+        logout,
+      };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

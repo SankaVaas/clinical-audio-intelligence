@@ -9,4 +9,10 @@ window.__RUNTIME_CONFIG__ = {
   OIDC_AUTHORITY: "https://auth.example.com/",
   OIDC_CLIENT_ID: "clinical-ai-frontend-dev",
   OIDC_AUDIENCE: "clinical-ai-api",
+  // Enabled for local `npm start` so you can click straight into the app
+  // without standing up an IdP. See backend/auth/dependencies.py.
+  DEV_AUTH_BYPASS: "true",
+  DEV_USER_ID: "dev-clinician",
+  DEV_TENANT_ID: "dev-tenant",
+  DEV_ROLES: "clinician,reviewer",
 };
